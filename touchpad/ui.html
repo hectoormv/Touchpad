@@ -139,6 +139,15 @@ section{display:flex;flex-direction:column;flex:none}
 .alert .btns button + button{border-left:1px solid var(--sep);color:var(--red);font-weight:600}
 .alert .btns button:hover{background:var(--fill)}
 .toast{position:fixed;left:16px;right:16px;bottom:16px;padding:12px 14px;border-radius:12px;background:var(--card);color:var(--red);font-size:13px;line-height:1.45;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+/* Plataforma: en Mac no hay barra propia (usa la nativa) */
+body.mac .titlebar{display:none}
+body.mac .head,body.mac .install-hero{padding-top:16px}
+body.mac .overlay{inset:0}
+body.mac .only-win, body:not(.mac) .only-mac{display:none!important}
+.perm{margin:14px 16px 0;padding:14px 16px;border-radius:12px;background:var(--card);box-shadow:var(--shadow);display:flex;align-items:center;gap:12px;flex:none}
+.perm p{margin:0;font-size:13px;line-height:1.4;color:var(--muted);flex:1}
+.perm p b{color:var(--text);display:block;font-size:14px;margin-bottom:2px}
+.perm button{border:0;border-radius:10px;background:var(--blue);color:#fff;font-size:13px;font-weight:600;padding:8px 12px;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -155,16 +164,18 @@ section{display:flex;flex-direction:column;flex:none}
     <div class="install-hero">
       <svg class="appicon" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#1b2a40"/><circle cx="7.2" cy="7.2" r="1.6" fill="#2F96FF"/><circle cx="12" cy="7.2" r="1.6" fill="#2F96FF"/><circle cx="16.8" cy="7.2" r="1.6" fill="#5b6472"/><circle cx="7.2" cy="12" r="1.6" fill="#2F96FF"/><circle cx="12" cy="12" r="2.1" fill="#2F96FF"/><circle cx="16.8" cy="12" r="1.6" fill="#2F96FF"/><circle cx="7.2" cy="16.8" r="1.6" fill="#5b6472"/><circle cx="12" cy="16.8" r="1.6" fill="#2F96FF"/><circle cx="16.8" cy="16.8" r="1.6" fill="#5b6472"/></svg>
       <h1>Tu móvil como trackpad</h1>
-      <p>Controla este PC y tus presentaciones desde el móvil, por la Wi-Fi de casa.</p>
+      <p>Controla tu ordenador y tus presentaciones desde el móvil, por la Wi-Fi de casa.</p>
     </div>
     <div class="group">
       <div class="row"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>No necesita instalar Python</div></div>
-      <div class="row"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>Firewall abierto solo en redes privadas</div></div>
-      <div class="row"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>Accesos en el escritorio y en Inicio</div></div>
+      <div class="row only-win"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>Firewall abierto solo en redes privadas</div></div>
+      <div class="row only-win"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>Accesos en el escritorio y en Inicio</div></div>
+      <div class="row only-mac"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>Se copia a la carpeta Aplicaciones</div></div>
+      <div class="row only-mac"><div class="item"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>Pedirá permiso de Accesibilidad para mover el ratón</div></div>
     </div>
     <div class="group">
       <label class="row" id="netRow" hidden><span>Marcar «<span id="netName"></span>» como privada</span><input type="checkbox" class="switch" id="instNet" checked></label>
-      <label class="row"><span>Iniciar con Windows</span><input type="checkbox" class="switch" id="instAuto" checked></label>
+      <label class="row"><span class="only-win">Iniciar con Windows</span><span class="only-mac">Abrir al iniciar sesión</span><input type="checkbox" class="switch" id="instAuto" checked></label>
     </div>
     <div class="spacer"></div>
     <div class="install-bottom">
@@ -202,7 +213,7 @@ section{display:flex;flex-direction:column;flex:none}
       <div class="stack">
         <div class="qr" id="qr" role="img" aria-label="Código QR para conectar el móvil"></div>
         <span class="t" style="font-size:15px">Escanéalo con la cámara</span>
-        <span class="s">Misma Wi-Fi que este PC: <span id="ipText"></span></span>
+        <span class="s">Misma Wi-Fi que este ordenador: <span id="ipText"></span></span>
       </div>
     </div>
     <button class="tinted deactivate"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>Desactivar</button>
@@ -221,9 +232,15 @@ section{display:flex;flex-direction:column;flex:none}
     <button class="tinted deactivate"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>Desactivar</button>
   </section>
 
+  <!-- Mac: falta el permiso de Accesibilidad -->
+  <div class="perm" id="permCard" hidden>
+    <p><b>Falta un permiso</b>Activa TouchPad en Accesibilidad para que el móvil pueda mover el ratón.</p>
+    <button id="permBtn">Abrir Ajustes</button>
+  </div>
+
   <!-- Ajustes (app instalada) -->
   <div class="group" id="settings" hidden>
-    <label class="row"><span>Iniciar con Windows</span><input type="checkbox" class="switch" id="autostart"></label>
+    <label class="row"><span class="only-win">Iniciar con Windows</span><span class="only-mac">Abrir al iniciar sesión</span><input type="checkbox" class="switch" id="autostart"></label>
     <div class="row">
       <span>Apariencia</span>
       <div class="seg" role="radiogroup" aria-label="Apariencia">
@@ -245,7 +262,7 @@ section{display:flex;flex-direction:column;flex:none}
   <div class="alert" role="alertdialog" aria-modal="true" aria-labelledby="cTitle" aria-describedby="cText">
     <div class="body">
       <h2 id="cTitle">¿Desinstalar TouchPad?</h2>
-      <p id="cText">Se borrarán el programa, los accesos directos, el inicio automático y la regla del firewall. El icono del móvil dejará de funcionar.</p>
+      <p id="cText"><span class="only-win">Se borrarán el programa, los accesos directos, el inicio automático y la regla del firewall.</span><span class="only-mac">Se borrarán la app de la carpeta Aplicaciones, el inicio automático y los ajustes.</span> El icono del móvil dejará de funcionar.</p>
       <label class="opt" id="pyRow" hidden><span>Desinstalar también Python <span id="pyVer"></span></span><input type="checkbox" class="switch" id="pyCheck" checked></label>
     </div>
     <div class="btns">
@@ -280,10 +297,12 @@ function screenName(){
 
 function render(){
   applyTheme(S.theme || "auto");
+  document.body.classList.toggle("mac", S.platform === "mac");
   const name = screenName();
   $$("[data-screen]").forEach(el => { el.hidden = el.dataset.screen !== name; });
   const installed = name !== "install";
   ["#head", "#settings", "#settingsSpacer", "#uninstallBtn"].forEach(id => { $(id).hidden = !installed; });
+  $("#permCard").hidden = !(installed && S.needs_permission);
 
   if (!installed){
     $("#installText").textContent = S.is_update ? "Actualizar" : "Instalar";
@@ -350,11 +369,13 @@ $("#minBtn").onclick = () => api().minimize();
 $("#closeBtn").onclick = () => api().close();
 
 $("#installBtn").onclick = async () => {
-  const r = await run("Instalando… Windows te pedirá permiso para configurar el firewall: pulsa «Sí».",
+  const r = await run(S.platform === "mac" ? "Copiando TouchPad a Aplicaciones…"
+      : "Instalando… Windows te pedirá permiso para configurar el firewall: pulsa «Sí».",
     () => api().install({ autostart: $("#instAuto").checked, private: !$("#netRow").hidden && $("#instNet").checked }));
   if (r && r.ok){ busy = true; showBusy("¡Instalado! Abriendo TouchPad…"); }
 };
 
+$("#permBtn").onclick = () => api().open_accessibility();
 $("#activateBtn").onclick = () => run("Activando…", () => api().activate());
 $$(".deactivate").forEach(b => b.onclick = () => run("Desactivando…", () => api().deactivate()));
 $("#autostart").onchange = e => api().set_autostart(e.target.checked);

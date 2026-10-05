@@ -1,4 +1,4 @@
-"""TouchPad para Windows: instalar, activar (QR), desactivar y desinstalar.
+"""TouchPad para Windows y Mac: instalar, activar (QR), desactivar y desinstalar.
 
 Se empaqueta como un único TouchPad.exe con PyInstaller (ver .github/workflows/build.yml).
 Argumentos: --background (arranque con Windows: oculto y activado), --uninstall.
@@ -6,6 +6,8 @@ Argumentos: --background (arranque con Windows: oculto y activado), --uninstall.
 import base64
 import json
 import os
+import plistlib
+import shlex
 import shutil
 import socket
 import subprocess
@@ -19,9 +21,10 @@ import webview
 import server
 from icon import draw_icon
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 APP = "TouchPad"
 IS_WIN = os.name == "nt"
+IS_MAC = sys.platform == "darwin"
 FROZEN = getattr(sys, "frozen", False)
 
 LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
@@ -32,7 +35,12 @@ START_MENU = APPDATA / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 STARTUP = START_MENU / "Startup"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TouchPad"
-SETTINGS_FILE = INSTALL_DIR / "settings.json"
+# --- Mac ---
+MAC_SUPPORT = Path.home() / "Library" / "Application Support" / APP
+MAC_AGENT = Path.home() / "Library" / "LaunchAgents" / "com.hectoormv.touchpad.plist"
+MAC_ACCESSIBILITY_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+
+SETTINGS_FILE = (MAC_SUPPORT if IS_MAC else INSTALL_DIR) / "settings.json"
 LOCK_PORT = 47823
 NO_WINDOW = 0x08000000 if IS_WIN else 0
 DETACHED = 0x00000008 if IS_WIN else 0
@@ -103,6 +111,8 @@ def unlink(p):
 
 
 def get_autostart():
+    if IS_MAC:
+        return MAC_AGENT.exists()
     if not IS_WIN:
         return False
     try:
@@ -114,6 +124,9 @@ def get_autostart():
 
 
 def set_autostart(on):
+    if IS_MAC:
+        mac_set_autostart(on)
+        return
     if not IS_WIN:
         return
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -246,7 +259,14 @@ def get_theme():
 
 
 def system_is_dark():
-    """True si Windows está en modo oscuro para las aplicaciones."""
+    """True si el sistema (Windows o Mac) está en modo oscuro."""
+    if IS_MAC:
+        try:
+            r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"],
+                               capture_output=True, text=True, timeout=5)
+            return "Dark" in r.stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return False
     if not IS_WIN:
         return False
     try:
@@ -255,6 +275,69 @@ def system_is_dark():
             return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
     except OSError:
         return False
+
+
+# --------------------------------------------------------------------------
+# Mac
+# --------------------------------------------------------------------------
+def mac_current_bundle():
+    """Carpeta TouchPad.app desde la que se está ejecutando (o None)."""
+    for parent in Path(sys.executable).resolve().parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def mac_install_target():
+    apps = Path("/Applications")
+    base = apps if os.access(apps, os.W_OK) else Path.home() / "Applications"
+    return base / "TouchPad.app"
+
+
+def mac_installed_bundle():
+    for base in (Path("/Applications"), Path.home() / "Applications"):
+        b = base / "TouchPad.app"
+        if b.exists():
+            return b
+    return None
+
+
+def mac_is_installed_copy():
+    cur = mac_current_bundle()
+    return cur is not None and cur.parent in (Path("/Applications"), Path.home() / "Applications")
+
+
+def mac_set_autostart(on):
+    if on:
+        bundle = mac_current_bundle() if mac_is_installed_copy() else mac_installed_bundle()
+        if not bundle:
+            return
+        MAC_AGENT.parent.mkdir(parents=True, exist_ok=True)
+        with open(MAC_AGENT, "wb") as f:
+            plistlib.dump({"Label": "com.hectoormv.touchpad",
+                           "ProgramArguments": [str(bundle / "Contents" / "MacOS" / "TouchPad"),
+                                                "--background"],
+                           "RunAtLoad": True}, f)
+    else:
+        unlink(MAC_AGENT)
+
+
+def mac_trusted(prompt=False):
+    """¿Tiene TouchPad permiso de Accesibilidad (necesario para mover el ratón)?"""
+    if not IS_MAC:
+        return True
+    try:
+        try:
+            from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+        except ImportError:
+            from HIServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+        return bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: bool(prompt)}))
+    except Exception:  # noqa: BLE001 - si no se puede comprobar, no bloqueamos
+        return True
+
+
+def mac_open_accessibility():
+    subprocess.Popen(["open", MAC_ACCESSIBILITY_URL])
 
 
 def same_path(a, b):
@@ -292,7 +375,13 @@ class App:
         self.lock = lock
         self.background = background
         self.want_uninstall = want_uninstall
-        self.installed = (not FROZEN) or same_path(sys.executable, INSTALLED_EXE)
+        if not FROZEN:
+            self.installed = True
+        elif IS_MAC:
+            self.installed = mac_is_installed_copy()
+        else:
+            self.installed = same_path(sys.executable, INSTALLED_EXE)
+        self.asked_permission = False
         self.srv = server.TouchpadServer()
         self.window = None
         self.tray = None
@@ -309,7 +398,10 @@ class App:
         s = {
             "version": VERSION,
             "installed": self.installed,
-            "is_update": (not self.installed) and INSTALLED_EXE.exists(),
+            "is_update": (not self.installed) and bool(
+                mac_installed_bundle() if IS_MAC else INSTALLED_EXE.exists()),
+            "platform": "mac" if IS_MAC else "windows",
+            "needs_permission": IS_MAC and self.installed and not mac_trusted(False),
             "active": active,
             "clients": self.srv.clients_list() if active else [],
             "autostart": get_autostart() if self.installed else True,
@@ -334,6 +426,9 @@ class App:
                                         "TouchPad (o la versión antigua) y vuelve a intentarlo."}
         self.qr = server.qr_svg(self.srv.url)
         self.update_tray()
+        if IS_MAC and not self.asked_permission and not mac_trusted(False):
+            self.asked_permission = True
+            mac_trusted(prompt=True)   # macOS muestra su aviso de Accesibilidad
         return {"ok": True}
 
     def deactivate(self):
@@ -352,6 +447,8 @@ class App:
 
     # ---------- instalar ----------
     def install(self, autostart, make_private):
+        if IS_MAC:
+            return self.install_mac(autostart)
         try:
             cleanup_old_version()
             INSTALL_DIR.mkdir(parents=True, exist_ok=True)
@@ -389,8 +486,40 @@ class App:
         except Exception as e:  # noqa: BLE001 - se muestra al usuario
             return {"ok": False, "msg": f"Error al instalar: {e}"}
 
+    def install_mac(self, autostart):
+        try:
+            src = mac_current_bundle()
+            if not FROZEN or src is None:
+                self.installed = True
+                return {"ok": True}
+            target = mac_install_target()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(src, target, symlinks=True)
+            # Quita la marca de "descargado de internet" para que abra sin avisos
+            subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(target)], capture_output=True)
+            MAC_SUPPORT.mkdir(parents=True, exist_ok=True)
+            if autostart:
+                MAC_AGENT.parent.mkdir(parents=True, exist_ok=True)
+                with open(MAC_AGENT, "wb") as f:
+                    plistlib.dump({"Label": "com.hectoormv.touchpad",
+                                   "ProgramArguments": [str(target / "Contents" / "MacOS" / "TouchPad"),
+                                                        "--background"],
+                                   "RunAtLoad": True}, f)
+            else:
+                unlink(MAC_AGENT)
+            self.release_lock()
+            subprocess.Popen(["open", "-n", str(target)])
+            threading.Timer(1.0, self.quit).start()
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "msg": f"Error al instalar: {e}"}
+
     # ---------- desinstalar ----------
     def uninstall(self, remove_python):
+        if IS_MAC:
+            return self.uninstall_mac()
         self.srv.stop()
         set_autostart(False)
         for lnk in (desktop_dir() / "TouchPad.lnk", START_MENU / "TouchPad.lnk",
@@ -405,6 +534,18 @@ class App:
         threading.Timer(2.5, self.quit).start()
         return {"ok": True, "python": python_ok}
 
+    def uninstall_mac(self):
+        self.srv.stop()
+        unlink(MAC_AGENT)
+        server.delete_token()
+        shutil.rmtree(MAC_SUPPORT, ignore_errors=True)
+        bundle = mac_current_bundle() if FROZEN else None
+        if bundle:
+            subprocess.Popen(["/bin/sh", "-c", f"sleep 3; rm -rf {shlex.quote(str(bundle))}"],
+                             start_new_session=True)
+        threading.Timer(2.5, self.quit).start()
+        return {"ok": True, "python": None}
+
     # ---------- ventana y bandeja ----------
     def show(self):
         if self.window:
@@ -415,7 +556,10 @@ class App:
         self.window.minimize()
 
     def close(self):
-        """Botón cerrar: si está activo se queda en la bandeja; si no, se cierra."""
+        """Botón cerrar: si está activo se queda en la bandeja (o en el Dock en Mac)."""
+        if IS_MAC and self.srv.running:
+            self.window.minimize()
+            return
         if self.srv.running and self.tray and self.installed:
             self.window.hide()
             if not self.tray_hint_shown:
@@ -430,6 +574,9 @@ class App:
     def on_closing(self):
         if self.quitting:
             return True
+        if IS_MAC and self.srv.running:
+            self.window.minimize()
+            return False
         if self.srv.running and self.tray and self.installed:
             self.window.hide()
             return False
@@ -517,7 +664,8 @@ class App:
                 self.py_versions = python_versions()
             threading.Thread(target=gather, daemon=True).start()
         if self.installed:
-            self.start_tray()
+            if IS_WIN:
+                self.start_tray()
             if self.background:
                 r = self.activate()
                 if not r["ok"]:
@@ -554,6 +702,10 @@ class Api:
     def uninstall(self, remove_python):
         return self._app.uninstall(bool(remove_python))
 
+    def open_accessibility(self):
+        mac_open_accessibility()
+        return {"ok": True}
+
     def minimize(self):
         self._app.minimize()
 
@@ -565,7 +717,12 @@ def main():
     args = sys.argv[1:]
     background = "--background" in args
     want_uninstall = "--uninstall" in args
-    is_installed_copy = (not FROZEN) or same_path(sys.executable, INSTALLED_EXE)
+    if not FROZEN:
+        is_installed_copy = True
+    elif IS_MAC:
+        is_installed_copy = mac_is_installed_copy()
+    else:
+        is_installed_copy = same_path(sys.executable, INSTALLED_EXE)
 
     lock = acquire_lock()
     if lock is None:
@@ -586,10 +743,15 @@ def main():
     app = App(lock, background, want_uninstall)
     theme = get_theme()
     dark = theme == "dark" or (theme == "auto" and system_is_dark())
+    # En Mac se usa la barra de título nativa (con los botones de colores) y, al arrancar
+    # con el sistema, la ventana empieza minimizada en el Dock en vez de oculta.
     window = webview.create_window(
         "TouchPad", url=str(server.resource("ui.html")), js_api=Api(app),
-        width=440, height=680, resizable=False, frameless=True, easy_drag=False,
-        hidden=background and app.installed, background_color="#000000" if dark else "#F2F2F7")
+        width=440, height=680 if not IS_MAC else 730, resizable=False,
+        frameless=not IS_MAC, easy_drag=False,
+        hidden=background and app.installed and not IS_MAC,
+        minimized=background and app.installed and IS_MAC,
+        background_color="#000000" if dark else "#F2F2F7")
     app.window = window
     window.events.closing += app.on_closing
     webview.start(app.on_start)

@@ -8,6 +8,7 @@ import secrets
 import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -136,6 +137,125 @@ class WindowsInput:
         self._send(*downs, *ups)
 
 
+# Teclas en Mac: (código de tecla, modificadores) o ("media", código NX)
+# Iniciar presentación = Cmd+Shift+Intro (PowerPoint y Google Slides; en Keynote es Cmd+Opción+P)
+MAC_KEYMAP = {
+    "next":      (124, ()),
+    "prev":      (123, ()),
+    "esc":       (53, ()),
+    "black":     (11, ()),                    # B
+    "start":     (36, ("cmd", "shift")),      # Intro
+    "laser":     (37, ("cmd",)),              # L
+    "volup":     ("media", 0),
+    "voldown":   ("media", 1),
+    "mute":      ("media", 7),
+    "playpause": ("media", 16),
+}
+
+
+class MacInput:
+    """Ratón y teclado en macOS con Quartz (necesita permiso de Accesibilidad)."""
+
+    def __init__(self):
+        import Quartz as Q
+        self.Q = Q
+        self._down = {"l": False, "r": False, "m": False}
+        self._wy = self._wx = 0.0
+        self._last = (0.0, None, 0)   # (hora, botón, nº de clics) para el doble clic
+        self._flags = {"cmd": Q.kCGEventFlagMaskCommand, "shift": Q.kCGEventFlagMaskShift,
+                       "alt": Q.kCGEventFlagMaskAlternate, "ctrl": Q.kCGEventFlagMaskControl}
+
+    def _pos(self):
+        return self.Q.CGEventGetLocation(self.Q.CGEventCreate(None))
+
+    def _clamp(self, x, y):
+        Q = self.Q
+        err, ids, n = Q.CGGetActiveDisplayList(16, None, None)
+        if err or not n:
+            return x, y
+        rects = [Q.CGDisplayBounds(d) for d in ids[:n]]
+        for r in rects:   # si el punto está en alguna pantalla, vale
+            if r.origin.x <= x < r.origin.x + r.size.width and r.origin.y <= y < r.origin.y + r.size.height:
+                return x, y
+        minx = min(r.origin.x for r in rects)
+        miny = min(r.origin.y for r in rects)
+        maxx = max(r.origin.x + r.size.width for r in rects) - 1
+        maxy = max(r.origin.y + r.size.height for r in rects) - 1
+        return max(minx, min(maxx, x)), max(miny, min(maxy, y))
+
+    def _post(self, ev):
+        self.Q.CGEventPost(self.Q.kCGHIDEventTap, ev)
+
+    def move(self, dx, dy):
+        Q = self.Q
+        p = self._pos()
+        x, y = self._clamp(p.x + dx, p.y + dy)
+        if self._down["l"]:
+            t, b = Q.kCGEventLeftMouseDragged, Q.kCGMouseButtonLeft
+        elif self._down["r"]:
+            t, b = Q.kCGEventRightMouseDragged, Q.kCGMouseButtonRight
+        else:
+            t, b = Q.kCGEventMouseMoved, Q.kCGMouseButtonLeft
+        self._post(Q.CGEventCreateMouseEvent(None, t, (x, y), b))
+
+    def button(self, b, down):
+        Q = self.Q
+        kinds = {"l": (Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp, Q.kCGMouseButtonLeft),
+                 "r": (Q.kCGEventRightMouseDown, Q.kCGEventRightMouseUp, Q.kCGMouseButtonRight),
+                 "m": (Q.kCGEventOtherMouseDown, Q.kCGEventOtherMouseUp, Q.kCGMouseButtonCenter)}
+        dn, up, btn = kinds.get(b, kinds["l"])
+        if down:
+            now = time.monotonic()
+            last_t, last_b, count = self._last
+            count = count + 1 if (last_b == b and now - last_t < 0.45) else 1
+            self._last = (now, b, count)
+        clicks = self._last[2] if self._last[1] == b else 1
+        ev = Q.CGEventCreateMouseEvent(None, dn if down else up, self._pos(), btn)
+        Q.CGEventSetIntegerValueField(ev, Q.kCGMouseEventClickState, clicks)  # Mac necesita esto para el doble clic
+        self._post(ev)
+        self._down[b if b in self._down else "l"] = down
+
+    def click(self, b):
+        self.button(b, True)
+        self.button(b, False)
+
+    def scroll(self, dy, dx):
+        # Llegan en "unidades de rueda" de Windows (120 = una muesca); en Mac usamos píxeles.
+        self._wy += dy / 4
+        self._wx += dx / 4
+        iy, ix = int(self._wy), int(self._wx)
+        if iy or ix:
+            self._wy -= iy
+            self._wx -= ix
+            Q = self.Q
+            self._post(Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitPixel, 2, iy, ix))
+
+    def _media(self, code):
+        from AppKit import NSEvent
+        for down in (True, False):
+            ev = NSEvent.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
+                14, (0, 0), 0xa00 if down else 0xb00, 0, 0, None, 8,
+                (code << 16) | ((0xa if down else 0xb) << 8), -1)
+            self._post(ev.CGEvent())
+
+    def key(self, name):
+        spec = MAC_KEYMAP.get(name)
+        if not spec:
+            return
+        code, mods = spec
+        if code == "media":
+            self._media(mods)
+            return
+        Q = self.Q
+        flags = 0
+        for m in mods:
+            flags |= self._flags[m]
+        for down in (True, False):
+            ev = Q.CGEventCreateKeyboardEvent(None, code, down)
+            Q.CGEventSetFlags(ev, flags)
+            self._post(ev)
+
+
 class DryRunInput:
     """Fuera de Windows: imprime los eventos (para pruebas)."""
     def move(self, dx, dy): print(f"  move {dx:+.2f} {dy:+.2f}")
@@ -143,6 +263,18 @@ class DryRunInput:
     def click(self, b): print(f"  click {b}")
     def scroll(self, dy, dx): print(f"  scroll {dy:+.1f} {dx:+.1f}")
     def key(self, name): print(f"  key {name}" if name in KEYMAP else f"  key ignorada {name!r}")
+
+
+def make_input():
+    system = platform.system()
+    if system == "Windows":
+        return WindowsInput()
+    if system == "Darwin":
+        try:
+            return MacInput()
+        except ImportError:
+            pass
+    return DryRunInput()
 
 
 # --------------------------------------------------------------------------
@@ -237,7 +369,7 @@ def device_name(ua):
 # --------------------------------------------------------------------------
 class TouchpadServer:
     def __init__(self, inp=None):
-        self.inp = inp or (WindowsInput() if platform.system() == "Windows" else DryRunInput())
+        self.inp = inp or make_input()
         self.token = load_token()
         self.httpd = None
         self.loop = None

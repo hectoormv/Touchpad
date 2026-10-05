@@ -1,5 +1,8 @@
 pywebview>=5.0
 websockets>=13.0
 qrcode>=7.4
-pystray>=0.19
 pillow>=10.0
+pystray>=0.19; sys_platform == "win32"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices>=10.0; sys_platform == "darwin"
