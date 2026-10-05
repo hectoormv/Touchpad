@@ -102,8 +102,6 @@ git push origin v1.1.0
 
 ## Créditos
 
-Inspirado en [Mousely](https://mouse.ly). TouchPad es un proyecto independiente escrito desde cero.
-
 Librerías de terceros: pywebview, websockets y qrcode (BSD), Pillow (MIT-CMU), pystray (LGPL v3), PyObjC (MIT) y PyInstaller. Cada una mantiene su propia licencia.
 
 ## Licencia
