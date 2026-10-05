@@ -1,4 +1,4 @@
-name: Compilar TouchPad.exe
+name: Compilar TouchPad
 
 on:
   push:
@@ -10,22 +10,18 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Instalar dependencias
         run: pip install -r requirements.txt pyinstaller
-
       - name: Generar icono
         run: python make_icon.py
-
-      - name: Compilar con PyInstaller
+      - name: Compilar TouchPad.exe
         run: >
           pyinstaller --noconfirm --onefile --windowed
           --name TouchPad
@@ -36,15 +32,51 @@ jobs:
           --hidden-import pystray._win32
           --collect-all webview
           touchpad/app.py
-
-      - name: Subir el .exe (pestaña Actions)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: TouchPad
+          name: TouchPad-Windows
           path: dist/TouchPad.exe
 
-      - name: Publicar en Releases (solo al crear una etiqueta v*)
-        if: startsWith(github.ref, 'refs/tags/')
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt pyinstaller
+      - name: Generar icono
+        run: python make_icon.py
+      - name: Compilar TouchPad.app
+        run: >
+          pyinstaller --noconfirm --onedir --windowed
+          --name TouchPad
+          --icon build/icon.png
+          --osx-bundle-identifier com.hectoormv.touchpad
+          --paths touchpad
+          --add-data "touchpad/ui.html:."
+          --add-data "touchpad/phone.html:."
+          --hidden-import webview.platforms.cocoa
+          touchpad/app.py
+      - name: Empaquetar en zip
+        run: ditto -c -k --keepParent dist/TouchPad.app dist/TouchPad-Mac.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TouchPad-Mac
+          path: dist/TouchPad-Mac.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Publicar en Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/TouchPad.exe
+          files: |
+            out/TouchPad-Windows/TouchPad.exe
+            out/TouchPad-Mac/TouchPad-Mac.zip
