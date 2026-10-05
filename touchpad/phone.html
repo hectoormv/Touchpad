@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F2F2F7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="TouchPad">
+<title>TouchPad</title>
+<style>
+:root{
+  --bg:#F2F2F7; --surface:#FFFFFF; --raise:#E5E5EA; --sep:#E5E5EA;
+  --text:#1D1D1F; --muted:#8E8E93; --blue:#007AFF; --blue-rgb:0,122,255; --ok:#34C759; --err:#FF3B30;
+  --dot:rgba(60,60,67,.18); --shadow:0 1px 3px rgba(0,0,0,.08); --seg-on:#FFFFFF;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --bg:#000000; --surface:#1C1C1E; --raise:#2C2C2E; --sep:#38383A;
+  --text:#F5F5F7; --muted:#98989D; --blue:#0A84FF; --blue-rgb:10,132,255; --ok:#30D158; --err:#FF453A;
+  --dot:rgba(235,235,245,.14); --shadow:none; --seg-on:#636366;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#000000; --surface:#1C1C1E; --raise:#2C2C2E; --sep:#38383A;
+    --text:#F5F5F7; --muted:#98989D; --blue:#0A84FF; --blue-rgb:10,132,255; --ok:#30D158; --err:#FF453A;
+    --dot:rgba(235,235,245,.14); --shadow:none; --seg-on:#636366;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;overscroll-behavior:none;touch-action:none;
+  transition:background .25s,color .25s}
+body{display:flex;flex-direction:column;gap:12px;height:100dvh;
+  padding:calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 16px)}
+button{font:inherit;color:var(--text);border:0;background:none;padding:0;cursor:pointer}
+button:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+svg{display:block}
+
+header{display:flex;align-items:center;gap:10px}
+.circle{width:42px;height:42px;border-radius:50%;background:var(--surface);box-shadow:var(--shadow);color:var(--muted);
+  display:grid;place-items:center;flex:none;transition:transform .1s}
+.circle:active{transform:scale(.92)}
+.circle svg{width:19px;height:19px}
+.pill{flex:1;height:42px;border-radius:999px;background:var(--surface);box-shadow:var(--shadow);
+  display:flex;align-items:center;padding:0 16px;gap:10px;font-size:15px;font-weight:600}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.pill[data-s=ok] .dot{background:var(--ok)}
+.pill[data-s=err] .dot{background:var(--err)}
+.pill[data-s=wait] .dot{animation:blink 1s infinite}
+.pill .label{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill[data-s=err] .label{color:var(--err)}
+.pill .wifi{width:18px;height:18px;color:var(--muted)}
+.pill[data-s=ok] .wifi{color:var(--blue)}
+@keyframes blink{50%{opacity:.25}}
+
+#pad{position:relative;flex:1;min-height:0;border-radius:28px;background:var(--surface);box-shadow:var(--shadow);
+  overflow:hidden;outline:2px solid transparent;outline-offset:-2px;transition:outline-color .15s}
+#pad.drag{outline-color:var(--blue)}
+#dots{position:absolute;inset:0}
+#hint{position:absolute;left:0;right:0;bottom:22px;text-align:center;color:var(--muted);
+  font-size:13px;line-height:1.55;pointer-events:none;transition:opacity .5s}
+#pad.used #hint{opacity:0}
+
+#toggle{align-self:center;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--muted);font-size:12px;padding:2px 12px}
+#toggle svg{width:16px;height:16px;transition:transform .2s}
+body.collapsed #toggle svg{transform:rotate(180deg)}
+body.collapsed .dock{display:none}
+
+.dock{position:relative;display:flex;align-items:center;justify-content:center;gap:18px;padding-bottom:4px}
+.nav{border-radius:50%;display:grid;place-items:center;transition:transform .1s}
+.nav:active{transform:scale(.93)}
+.nav.prev{width:66px;height:66px;background:var(--surface);box-shadow:var(--shadow)}
+.nav.next{width:78px;height:78px;background:var(--blue);color:#fff;box-shadow:0 10px 24px rgba(var(--blue-rgb),.38)}
+.nav svg{width:28px;height:28px}
+.nav.next svg{width:32px;height:32px}
+.cluster{display:grid;grid-template-columns:repeat(2,46px);gap:10px}
+.mini{width:46px;height:46px;border-radius:50%;background:var(--surface);box-shadow:var(--shadow);display:grid;place-items:center;
+  transition:transform .1s,background .15s,color .15s}
+.mini:active{transform:scale(.9)}
+.mini svg{width:19px;height:19px}
+.mini.on{background:var(--blue);color:#fff}
+
+#vol{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);
+  display:none;gap:8px;padding:8px;border-radius:999px;background:var(--surface);box-shadow:0 10px 30px rgba(0,0,0,.18)}
+#vol.open{display:flex}
+#vol .mini{background:var(--raise);box-shadow:none}
+
+dialog{background:var(--bg);color:var(--text);border:0;border-radius:22px;width:min(92vw,420px);padding:18px 16px}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+dialog h2{margin:2px 4px 14px;font-size:20px;font-weight:700}
+.group{border-radius:12px;background:var(--surface);overflow:hidden;margin-bottom:14px}
+.group > *{display:block;padding:12px 14px;font-size:15px}
+.group > * + *{border-top:1px solid var(--sep)}
+.group label span.lbl{display:flex;justify-content:space-between;color:var(--muted);margin-bottom:8px;font-size:14px}
+input[type=range]{width:100%;accent-color:var(--blue)}
+.row{display:flex!important;align-items:center;justify-content:space-between;gap:10px}
+.switch{appearance:none;-webkit-appearance:none;position:relative;width:51px;height:31px;border-radius:16px;background:var(--raise);margin:0;flex:none;transition:background .2s}
+.switch::before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:transform .2s}
+.switch:checked{background:var(--ok)}
+.switch:checked::before{transform:translateX(20px)}
+.seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:2px;border-radius:9px;background:var(--raise);flex:1;max-width:230px}
+.seg label{position:relative}
+.seg input{position:absolute;opacity:0;inset:0;margin:0}
+.seg span{display:block;text-align:center;font-size:13px;font-weight:500;padding:6px 0;border-radius:7px}
+.seg input:checked + span{background:var(--seg-on);box-shadow:0 1px 3px rgba(0,0,0,.15);font-weight:600}
+.btn-wide{width:100%;padding:13px;border-radius:12px;background:var(--surface);color:var(--blue);font-size:16px;font-weight:600;margin-bottom:10px}
+.done{width:100%;padding:13px;border-radius:12px;background:var(--blue);color:#fff;font-size:16px;font-weight:600}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <button class="circle" id="gear" aria-label="Ajustes">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.67 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.3.6.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>
+  </button>
+  <div class="pill" id="status" data-s="wait">
+    <span class="dot"></span>
+    <span class="label" id="stext">Conectando…</span>
+    <svg class="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M2 8.8a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16.2a5 5 0 0 1 6 0"/><circle cx="12" cy="19.6" r="1" fill="currentColor"/></svg>
+  </div>
+  <button class="circle" id="fsBtn" aria-label="Pantalla completa">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+  </button>
+</header>
+
+<div id="pad">
+  <canvas id="dots"></canvas>
+  <div id="hint">Toca para hacer clic. Dos dedos para desplazar.<br>Mantén pulsado para arrastrar.</div>
+</div>
+
+<button id="toggle" aria-label="Mostrar u ocultar controles de presentación">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+  Controles de presentación
+</button>
+
+<div class="dock">
+  <button class="nav prev" data-k="prev" aria-label="Diapositiva anterior">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
+
+  <div class="cluster">
+    <button class="mini" id="laser" aria-label="Puntero láser">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+    </button>
+    <button class="mini" id="startBtn" aria-label="Iniciar presentación">
+      <svg id="startIco" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12.5-7.5z"/></svg>
+    </button>
+    <button class="mini" id="volBtn" aria-label="Volumen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4V5z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+    </button>
+    <button class="mini" id="black" aria-label="Pantalla negra">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>
+    </button>
+  </div>
+
+  <button class="nav next" data-k="next" aria-label="Diapositiva siguiente">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+
+  <div id="vol" role="menu">
+    <button class="mini" data-k="voldown" aria-label="Bajar volumen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 12h12"/></svg>
+    </button>
+    <button class="mini" data-k="volup" aria-label="Subir volumen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg>
+    </button>
+    <button class="mini" data-k="mute" aria-label="Silenciar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4V5z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6"/></svg>
+    </button>
+    <button class="mini" data-k="playpause" aria-label="Reproducir o pausar">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 5v14l8-7zM15 5h2.5v14H15zM19.5 5H22v14h-2.5z"/></svg>
+    </button>
+  </div>
+</div>
+
+<dialog id="settings">
+  <h2>Ajustes</h2>
+  <div class="group">
+    <div class="row"><span>Apariencia</span>
+      <div class="seg" role="radiogroup" aria-label="Apariencia">
+        <label><input type="radio" name="theme" value="auto"><span>Auto</span></label>
+        <label><input type="radio" name="theme" value="light"><span>Claro</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>Oscuro</span></label>
+      </div>
+    </div>
+  </div>
+  <div class="group">
+    <label><span class="lbl">Sensibilidad <output id="sensOut"></output></span><input id="sens" type="range" min="0.5" max="3" step="0.1"></label>
+    <label><span class="lbl">Velocidad de desplazamiento <output id="scrollOut"></output></span><input id="scrollSpd" type="range" min="0.5" max="3" step="0.1"></label>
+  </div>
+  <div class="group">
+    <label class="row">Desplazamiento natural<input id="natural" type="checkbox" class="switch"></label>
+    <label class="row">Vibrar al tocar<input id="haptics" type="checkbox" class="switch"></label>
+  </div>
+  <button class="done" id="close">Hecho</button>
+</dialog>
+
+<script>
+"use strict";
+const WS_PORT = __WS_PORT__;
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const $ = id => document.getElementById(id);
+
+// ---------- Ajustes (se guardan en el móvil) ----------
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const cfg = {
+  sens: store.get("sens", 1.4), scroll: store.get("scroll", 1.2),
+  natural: store.get("natural", true), haptics: store.get("haptics", true),
+  collapsed: store.get("collapsed", false)
+};
+function bindRange(id, outId, key){
+  const el = $(id), out = $(outId);
+  el.value = cfg[key]; out.textContent = (+cfg[key]).toFixed(1);
+  el.oninput = () => { cfg[key] = +el.value; out.textContent = cfg[key].toFixed(1); store.set(key, cfg[key]); };
+}
+function bindCheck(id, key){
+  $(id).checked = cfg[key];
+  $(id).onchange = e => { cfg[key] = e.target.checked; store.set(key, cfg[key]); };
+}
+bindRange("sens", "sensOut", "sens");
+bindRange("scrollSpd", "scrollOut", "scroll");
+bindCheck("natural", "natural");
+bindCheck("haptics", "haptics");
+
+// ---------- Apariencia: auto (según el móvil), claro u oscuro ----------
+const darkMQ = window.matchMedia("(prefers-color-scheme: dark)");
+function applyTheme(){
+  const t = store.get("theme", "auto");
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+  const dark = t === "dark" || (t === "auto" && darkMQ.matches);
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#000000" : "#F2F2F7";
+  document.querySelectorAll('input[name="theme"]').forEach(r => { r.checked = r.value === t; });
+  if (typeof refreshColors === "function") refreshColors();
+}
+document.querySelectorAll('input[name="theme"]').forEach(r => {
+  r.onchange = () => { store.set("theme", r.value); applyTheme(); };
+});
+if (darkMQ.addEventListener) darkMQ.addEventListener("change", applyTheme);
+$("gear").onclick = () => $("settings").showModal();
+$("close").onclick = () => $("settings").close();
+
+const root = document.documentElement;
+const canFs = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+if (!canFs) $("fsBtn").style.visibility = "hidden";   // iPhone: usa "Añadir a pantalla de inicio"
+$("fsBtn").onclick = () => {
+  if (document.fullscreenElement || document.webkitFullscreenElement)
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  else (root.requestFullscreen || root.webkitRequestFullscreen).call(root);
+};
+
+document.body.classList.toggle("collapsed", cfg.collapsed);
+$("toggle").onclick = () => {
+  cfg.collapsed = !cfg.collapsed; store.set("collapsed", cfg.collapsed);
+  document.body.classList.toggle("collapsed", cfg.collapsed);
+};
+
+// ---------- Conexión ----------
+let ws = null, ready = false, retry = 0;
+function setStatus(s, text){ $("status").dataset.s = s; $("stext").textContent = text; }
+function connect(){
+  ws = new WebSocket(`ws://${location.hostname}:${WS_PORT}/?t=${encodeURIComponent(TOKEN)}`);
+  ws.onopen = () => { ready = true; retry = 0; setStatus("ok", "Conectado"); };
+  ws.onclose = e => {
+    ready = false;
+    if (e.code === 4001){ setStatus("err", "Enlace no válido"); return; }
+    setStatus("wait", "Reconectando…");
+    setTimeout(connect, Math.min(4000, 500 * (++retry)));
+  };
+  ws.onerror = () => {};
+}
+function send(o){ if (ready && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+const buzz = ms => { if (cfg.haptics && navigator.vibrate) navigator.vibrate(ms); };
+connect();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && (!ws || ws.readyState > 1)) connect();
+});
+
+// ---------- Botones ----------
+document.querySelectorAll("[data-k]").forEach(b => {
+  b.addEventListener("click", () => { send({t:"k", k:b.dataset.k}); buzz(10); });
+});
+function toggleBtn(id, key){
+  const b = $(id);
+  b.addEventListener("click", () => {
+    send({t:"k", k:key}); buzz(12);
+    b.classList.toggle("on");
+    b.setAttribute("aria-pressed", b.classList.contains("on"));
+  });
+}
+toggleBtn("laser", "laser");
+toggleBtn("black", "black");
+
+const PLAY = '<path d="M7 4.5v15l12.5-7.5z"/>', STOP = '<rect x="6" y="6" width="12" height="12" rx="2"/>';
+let presenting = false;
+$("startBtn").addEventListener("click", () => {
+  presenting = !presenting;
+  send({t:"k", k: presenting ? "start" : "esc"}); buzz(12);
+  $("startIco").innerHTML = presenting ? STOP : PLAY;
+  $("startBtn").classList.toggle("on", presenting);
+  $("startBtn").setAttribute("aria-label", presenting ? "Salir de la presentación" : "Iniciar presentación");
+  if (!presenting){ $("laser").classList.remove("on"); $("black").classList.remove("on"); }
+});
+
+$("volBtn").addEventListener("click", e => { e.stopPropagation(); $("vol").classList.toggle("open"); buzz(8); });
+$("vol").addEventListener("click", e => e.stopPropagation());
+document.addEventListener("click", () => $("vol").classList.remove("open"));
+
+// ---------- Matriz de puntos ----------
+const pad = $("pad"), cv = $("dots"), ctx = cv.getContext("2d");
+const GAP = 15, SIGMA2 = 2 * 58 * 58, BUCKETS = 10;
+let W = 0, H = 0, dpr = 1, cols = 0, rows = 0, ox = 0, oy = 0;
+let level = new Float32Array(0), points = [], animating = false;
+let DOT = "rgba(60,60,67,.18)", BLUE_RGB = "0,122,255";
+function refreshColors(){
+  const cs = getComputedStyle(document.documentElement);
+  DOT = cs.getPropertyValue("--dot").trim() || DOT;
+  BLUE_RGB = cs.getPropertyValue("--blue-rgb").trim() || BLUE_RGB;
+  draw();
+}
+
+function resize(){
+  const r = pad.getBoundingClientRect();
+  dpr = Math.min(window.devicePixelRatio || 1, 3);
+  W = r.width; H = r.height;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  cols = Math.max(1, Math.floor((W - 20) / GAP) + 1);
+  rows = Math.max(1, Math.floor((H - 20) / GAP) + 1);
+  ox = (W - (cols - 1) * GAP) / 2; oy = (H - (rows - 1) * GAP) / 2;
+  level = new Float32Array(cols * rows);
+  draw();
+}
+new ResizeObserver(resize).observe(pad);
+applyTheme();
+
+function setPoints(touches){
+  const r = pad.getBoundingClientRect();
+  points = Array.from(touches, t => [t.clientX - r.left, t.clientY - r.top]);
+  if (!animating){ animating = true; requestAnimationFrame(frame); }
+}
+function frame(){
+  let active = points.length > 0;
+  for (let j = 0; j < rows; j++){
+    const y = oy + j * GAP;
+    for (let i = 0; i < cols; i++){
+      const k = j * cols + i, x = ox + i * GAP;
+      let v = level[k] * 0.9;                       // estela que se apaga
+      for (const p of points){
+        const dx = x - p[0], dy = y - p[1];
+        const e = Math.exp(-(dx * dx + dy * dy) / SIGMA2);
+        if (e > v) v = e;
+      }
+      level[k] = v < 0.01 ? 0 : v;
+      if (level[k]) active = true;
+    }
+  }
+  draw();
+  if (active) requestAnimationFrame(frame); else animating = false;
+}
+function draw(){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const groups = Array.from({length: BUCKETS + 1}, () => []);
+  for (let k = 0; k < level.length; k++) groups[Math.ceil(level[k] * BUCKETS)].push(k);
+  for (let b = 0; b <= BUCKETS; b++){
+    const g = groups[b];
+    if (!g.length) continue;
+    const v = b / BUCKETS;
+    ctx.fillStyle = b === 0 ? DOT : `rgba(${BLUE_RGB},${0.25 + 0.75 * v})`;
+    const rad = 1.4 + 3.8 * v;
+    ctx.beginPath();
+    for (const k of g){
+      const x = ox + (k % cols) * GAP, y = oy + Math.floor(k / cols) * GAP;
+      ctx.moveTo(x + rad, y); ctx.arc(x, y, rad, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+}
+
+// ---------- Gestos del trackpad ----------
+let mx = 0, my = 0, sx = 0, sy = 0;
+let lastX = 0, lastY = 0, startX = 0, startY = 0, startT = 0;
+let maxFingers = 0, moved = false, dragging = false, holdTimer = null;
+const TAP_MS = 250, MOVE_SLOP = 8, HOLD_MS = 450;
+
+function center(touches){
+  let x = 0, y = 0;
+  for (const t of touches){ x += t.clientX; y += t.clientY; }
+  return [x / touches.length, y / touches.length];
+}
+function cancelHold(){ if (holdTimer){ clearTimeout(holdTimer); holdTimer = null; } }
+
+pad.addEventListener("touchstart", e => {
+  e.preventDefault();
+  pad.classList.add("used");
+  $("vol").classList.remove("open");
+  const n = e.touches.length;
+  [lastX, lastY] = center(e.touches);
+  if (n === 1 && !dragging){
+    startX = lastX; startY = lastY; startT = performance.now();
+    moved = false; maxFingers = 1;
+    cancelHold();
+    holdTimer = setTimeout(() => {
+      if (!moved){ dragging = true; pad.classList.add("drag"); send({t:"dn"}); buzz(25); }
+    }, HOLD_MS);
+  } else {
+    maxFingers = Math.max(maxFingers, n);
+    cancelHold();
+  }
+  setPoints(e.touches);
+}, {passive:false});
+
+pad.addEventListener("touchmove", e => {
+  e.preventDefault();
+  const [x, y] = center(e.touches);
+  const dx = x - lastX, dy = y - lastY;
+  lastX = x; lastY = y;
+  if (!moved && Math.hypot(x - startX, y - startY) > MOVE_SLOP){ moved = true; cancelHold(); }
+  if (e.touches.length === 1){
+    const speed = Math.hypot(dx, dy);
+    const gain = cfg.sens * (1 + Math.min(speed, 40) / 12);
+    mx += dx * gain; my += dy * gain;
+  } else if (e.touches.length === 2 && moved){
+    const dir = cfg.natural ? 1 : -1;
+    sy += dy * 4 * cfg.scroll * dir;
+    sx += -dx * 4 * cfg.scroll * dir;
+  }
+  setPoints(e.touches);
+}, {passive:false});
+
+function endTouch(e){
+  e.preventDefault();
+  setPoints(e.touches);
+  if (e.touches.length > 0){ [lastX, lastY] = center(e.touches); return; }
+  cancelHold();
+  if (dragging){
+    dragging = false; pad.classList.remove("drag"); send({t:"up"});
+  } else if (!moved && performance.now() - startT < TAP_MS){
+    if (maxFingers === 1){ send({t:"c", b:"l"}); buzz(8); }
+    else if (maxFingers === 2){ send({t:"c", b:"r"}); buzz(15); }
+    else if (maxFingers >= 3){ send({t:"c", b:"m"}); buzz(15); }
+  }
+  maxFingers = 0;
+}
+pad.addEventListener("touchend", endTouch, {passive:false});
+pad.addEventListener("touchcancel", endTouch, {passive:false});
+
+(function flush(){
+  if (mx || my){ send({t:"m", x:+mx.toFixed(2), y:+my.toFixed(2)}); mx = my = 0; }
+  if (sx || sy){ send({t:"s", x:Math.round(sx), y:Math.round(sy)}); sx = sy = 0; }
+  requestAnimationFrame(flush);
+})();
+</script>
+</body>
+</html>
