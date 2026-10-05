@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="Logo de TouchPad" width="128"></p>
+
 <h1 align="center">TouchPad</h1>
 
 <p align="center">
@@ -51,14 +53,16 @@ El trackpad es una matriz de puntos que se ilumina bajo el dedo. Debajo están l
 
 Controles de presentación: diapositiva anterior y siguiente, iniciar y salir (F5 / Esc), puntero láser, pantalla negra, volumen y play/pausa.
 
-## Modo claro y oscuro
+## Menú de la bandeja y ajustes
 
-Tanto el programa como la app del móvil tienen **Automático, Claro y Oscuro**. En automático siguen el tema de Windows o del móvil.
+TouchPad se queda en segundo plano junto al reloj. Con **clic derecho** en su icono se abre un menú para activarlo, ver el QR, entrar en los ajustes o buscar actualizaciones. En los **Ajustes** del ordenador se configuran la velocidad del cursor, la aceleración, el scroll (velocidad, inercia y dirección natural) y los gestos; el móvil los aplica al momento.
 
 <p align="center">
-  <img src="docs/pc-qr.png" alt="Programa en modo claro" width="260">
-  <img src="docs/pc-oscuro.png" alt="Programa en modo oscuro" width="260">
+  <img src="docs/pc-bandeja.png" alt="Menú de la bandeja con el estado de conexión" width="230">
+  <img src="docs/pc-ajustes.png" alt="Ventana de ajustes del trackpad" width="260">
 </p>
+
+La app del móvil tiene modo **Automático, Claro y Oscuro**: en automático sigue el tema del móvil.
 
 ## En Mac
 

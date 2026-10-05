@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import plistlib
+import re
 import shlex
 import shutil
 import socket
@@ -14,14 +15,19 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import webbrowser
 from pathlib import Path
 
 import webview
 
 import server
+import tray_ui
 from icon import draw_icon
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+RELEASES_API = "https://api.github.com/repos/hectoormv/touchpad/releases/latest"
+RELEASES_PAGE = "https://github.com/hectoormv/touchpad/releases/latest"
 APP = "TouchPad"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -345,6 +351,76 @@ def same_path(a, b):
 
 
 # --------------------------------------------------------------------------
+# Windows: colocar el menú de cristal junto al reloj
+# --------------------------------------------------------------------------
+TRAY_TITLE = "TouchPad Menu"
+
+
+def win_place_popup(title, style=True):
+    """Coloca la ventana del menú junto al cursor (sobre la barra de tareas), por encima
+    de todo, sin botón en la barra de tareas y con esquinas redondeadas en Windows 11."""
+    if not IS_WIN:
+        return False
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    u.FindWindowW.restype = wintypes.HWND
+    hwnd = u.FindWindowW(None, title)
+    if not hwnd:
+        return False
+    if style:
+        get = getattr(u, "GetWindowLongPtrW", u.GetWindowLongW)
+        setl = getattr(u, "SetWindowLongPtrW", u.SetWindowLongW)
+        get.restype = ctypes.c_ssize_t
+        get.argtypes = [wintypes.HWND, ctypes.c_int]
+        setl.restype = ctypes.c_ssize_t
+        setl.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        ex = get(hwnd, -20)                                   # GWL_EXSTYLE
+        setl(hwnd, -20, (ex | 0x80) & ~0x40000)               # TOOLWINDOW, sin APPWINDOW
+        try:
+            pref = ctypes.c_int(2)                            # DWMWCP_ROUND
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(pref), 4)
+        except Exception:  # noqa: BLE001 - Windows 10 no lo tiene
+            pass
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+    pt = wintypes.POINT()
+    u.GetCursorPos(ctypes.byref(pt))
+    rect = wintypes.RECT()
+    u.GetWindowRect(hwnd, ctypes.byref(rect))
+    w, h = rect.right - rect.left, rect.bottom - rect.top
+    u.MonitorFromPoint.restype = wintypes.HANDLE
+    u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+    mi = MONITORINFO()
+    mi.cbSize = ctypes.sizeof(mi)
+    u.GetMonitorInfoW(u.MonitorFromPoint(pt, 2), ctypes.byref(mi))
+    wk = mi.rcWork
+    x = max(wk.left + 8, min(pt.x - w // 2, wk.right - w - 8))
+    y = pt.y - h - 12
+    if y < wk.top + 8:            # barra de tareas arriba: abrir hacia abajo
+        y = pt.y + 12
+    y = max(wk.top + 8, min(y, wk.bottom - h - 8))
+    # HWND_TOPMOST, SWP_NOSIZE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+    u.SetWindowPos(hwnd, wintypes.HWND(-1), x, y, 0, 0, 0x0001 | 0x0040 | 0x0020)
+    u.SetForegroundWindow(hwnd)
+    return True
+
+
+def version_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3])
+
+
+def check_latest_release():
+    req = urllib.request.Request(RELEASES_API, headers={"User-Agent": "TouchPad",
+                                                        "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        data = json.load(r)
+    return str(data.get("tag_name", "")).lstrip("vV"), data.get("html_url") or RELEASES_PAGE
+
+
+# --------------------------------------------------------------------------
 # Una sola instancia
 # --------------------------------------------------------------------------
 def acquire_lock():
@@ -391,6 +467,12 @@ class App:
         self.py_versions = []
         self.tray_hint_shown = False
         self.quitting = False
+        self.tray_win = None          # menú de cristal (Windows)
+        self._tray_visible = False
+        self._tray_hidden_at = 0.0
+        self._tray_styled = False
+        self.go_to = None             # pantalla a abrir en la ventana principal
+        self.srv.set_config(load_settings().get("trackpad", {}))
 
     # ---------- estado para la interfaz ----------
     def state(self):
@@ -409,13 +491,80 @@ class App:
             "python_versions": self.py_versions,
             "want_uninstall": self.want_uninstall,
             "error": self.error,
-            "theme": get_theme(),
+            "settings": dict(self.srv.config),
+            "go_to": self.go_to,
         }
         if active:
             s.update(url=self.srv.url, ip=self.srv.ip, qr=self.qr)
         self.want_uninstall = False
         self.error = ""
+        self.go_to = None
         return s
+
+    def state_tray(self):
+        active = self.srv.running
+        return {"version": VERSION, "active": active, "autostart": get_autostart(),
+                "clients": self.srv.clients_list() if active else []}
+
+    # ---------- ajustes del trackpad ----------
+    def set_setting(self, key, value):
+        if key not in server.DEFAULT_CONFIG:
+            return {"ok": False}
+        cfg = dict(self.srv.config)
+        cfg[key] = value
+        self.srv.set_config(cfg)
+        save_setting("trackpad", self.srv.config)
+        return {"ok": True, "settings": dict(self.srv.config)}
+
+    # ---------- actualizaciones ----------
+    def check_updates(self):
+        try:
+            latest, url = check_latest_release()
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "msg": "No se pudo comprobar. ¿Hay conexión a internet?"}
+        newer = version_tuple(latest) > version_tuple(VERSION)
+        if newer:
+            webbrowser.open(url)
+        return {"ok": True, "latest": latest, "newer": newer}
+
+    # ---------- menú de cristal de la bandeja (Windows) ----------
+    def show_tray_popup(self):
+        w = self.tray_win
+        if not w:
+            return
+        if self._tray_visible or time.monotonic() - self._tray_hidden_at < 0.35:
+            self.hide_tray_popup()        # un segundo clic en el icono lo cierra
+            return
+        w.show()
+        win_place_popup(TRAY_TITLE, style=not self._tray_styled)
+        self._tray_styled = True
+        self._tray_visible = True
+        try:
+            w.evaluate_js("window.onShown && window.onShown()")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def hide_tray_popup(self):
+        if self.tray_win and self._tray_visible:
+            self._tray_visible = False
+            self._tray_hidden_at = time.monotonic()
+            try:
+                self.tray_win.hide()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def show_main(self, screen=None):
+        self.hide_tray_popup()
+        if screen == "qr" and not self.srv.running:
+            r = self.activate()
+            if not r["ok"]:
+                self.error = r["msg"]
+        self.go_to = "settings" if screen == "settings" else "main"
+        self.show()
+        try:
+            self.window.evaluate_js(f"window.goTo && window.goTo({json.dumps(self.go_to)})")
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------- activar / desactivar ----------
     def activate(self):
@@ -582,6 +731,9 @@ class App:
             return False
         self.quitting = True
         self._shutdown()
+        if self.tray_win:   # si no, la ventana oculta del menú mantendría vivo el programa
+            tw = self.tray_win
+            threading.Timer(0.1, lambda: tw.destroy()).start()
         return True
 
     def _shutdown(self):
@@ -598,6 +750,11 @@ class App:
             return
         self.quitting = True
         self._shutdown()
+        if self.tray_win:
+            try:
+                self.tray_win.destroy()
+            except Exception:  # noqa: BLE001
+                pass
         if self.window:
             self.window.destroy()
 
@@ -621,7 +778,22 @@ class App:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Salir", lambda: self.quit()),
         )
-        self.tray = pystray.Icon("TouchPad", draw_icon(64, False), "TouchPad: desactivado", menu)
+        IconClass = pystray.Icon
+        if self.tray_win is not None:
+            try:
+                from pystray import _win32
+                app = self
+                if hasattr(_win32.Icon, "_on_notify"):
+                    class GlassIcon(_win32.Icon):
+                        def _on_notify(self, wparam, lparam):
+                            if lparam == 0x0205:          # WM_RBUTTONUP: menú de cristal
+                                app.show_tray_popup()
+                                return None
+                            return super()._on_notify(wparam, lparam)
+                    IconClass = GlassIcon
+            except Exception:  # noqa: BLE001 - si falla, se usa el menú normal de Windows
+                IconClass = pystray.Icon
+        self.tray = IconClass("TouchPad", draw_icon(64, False), "TouchPad: desactivado", menu)
         self.tray.run_detached()
 
     def update_tray(self):
@@ -702,6 +874,28 @@ class Api:
     def uninstall(self, remove_python):
         return self._app.uninstall(bool(remove_python))
 
+    def get_state_tray(self):
+        return self._app.state_tray()
+
+    def set_active(self, on):
+        return self._app.activate() if on else self._app.deactivate()
+
+    def set_setting(self, key, value):
+        return self._app.set_setting(str(key), value)
+
+    def check_updates(self):
+        return self._app.check_updates()
+
+    def show_main(self, screen=None):
+        self._app.show_main(screen)
+
+    def hide_tray(self):
+        self._app.hide_tray_popup()
+
+    def quit_app(self):
+        self._app.hide_tray_popup()
+        threading.Timer(0.1, self._app.quit).start()
+
     def open_accessibility(self):
         mac_open_accessibility()
         return {"ok": True}
@@ -741,8 +935,6 @@ def main():
             return
 
     app = App(lock, background, want_uninstall)
-    theme = get_theme()
-    dark = theme == "dark" or (theme == "auto" and system_is_dark())
     # En Mac se usa la barra de título nativa (con los botones de colores) y, al arrancar
     # con el sistema, la ventana empieza minimizada en el Dock en vez de oculta.
     window = webview.create_window(
@@ -751,9 +943,22 @@ def main():
         frameless=not IS_MAC, easy_drag=False,
         hidden=background and app.installed and not IS_MAC,
         minimized=background and app.installed and IS_MAC,
-        background_color="#000000" if dark else "#F2F2F7")
+        background_color="#0B1220")
     app.window = window
     window.events.closing += app.on_closing
+    if IS_WIN and app.installed:
+        tray_win = webview.create_window(
+            TRAY_TITLE, html=tray_ui.HTML, js_api=Api(app), width=284, height=380,
+            resizable=False, frameless=True, easy_drag=False, on_top=True, hidden=True,
+            background_color="#0F1828")
+        app.tray_win = tray_win
+
+        def tray_closing():
+            if app.quitting:
+                return True
+            app.hide_tray_popup()
+            return False
+        tray_win.events.closing += tray_closing
     webview.start(app.on_start)
     app.release_lock()
 

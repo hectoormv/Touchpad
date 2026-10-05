@@ -1,19 +1,25 @@
-"""Genera build/icon.ico (Windows) y build/icon.png (Mac)."""
-import sys
+"""Genera build/icon.ico (Windows) y build/icon.png (Mac) a partir de assets/."""
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "touchpad"))
-from icon import draw_icon  # noqa: E402
+from PIL import Image
 
-out = Path("build")
+root = Path(__file__).parent
+out = root / "build"
 out.mkdir(exist_ok=True)
-img = draw_icon(512)
-img.save(out / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
-                                  (64, 64), (128, 128), (256, 256)])
-# En Mac los iconos llevan margen alrededor del cuadrado redondeado
-mac = img.copy().resize((824, 824))
-from PIL import Image  # noqa: E402
+logo = Image.open(root / "assets" / "logo.png").convert("RGBA")
+small = Image.open(root / "assets" / "tray-activo.png").convert("RGBA")
+
+# Windows: en tamaños pequeños (16-32) se usa la versión simplificada, que se lee mejor
+frames = []
+for s in (16, 24, 32, 48, 64, 128, 256):
+    src = small if s <= 32 else logo
+    frames.append(src.resize((s, s), Image.LANCZOS))
+frames[-1].save(out / "icon.ico", format="ICO", sizes=[f.size for f in frames],
+                append_images=frames[:-1])
+
+# Mac: los iconos llevan margen alrededor
 canvas = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-canvas.paste(mac, (100, 100), mac)
+inner = logo.resize((824, 824), Image.LANCZOS)
+canvas.paste(inner, (100, 100), inner)
 canvas.save(out / "icon.png")
 print("build/icon.ico y build/icon.png generados")

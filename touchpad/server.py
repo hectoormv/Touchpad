@@ -364,6 +364,40 @@ def device_name(ua):
     return "Móvil"
 
 
+# Ajustes del trackpad que se configuran en el ordenador y se mandan al móvil
+DEFAULT_CONFIG = {
+    "speed": 5.0,         # velocidad del cursor (1-10)
+    "accel": 0.7,         # aceleración (0-1)
+    "scroll_speed": 5.0,  # velocidad del scroll (1-10)
+    "inertia": 0.6,       # inercia del scroll (0-1)
+    "natural": True,      # desplazamiento natural
+    "tap_click": True,    # tocar para hacer clic
+    "hold_drag": True,    # mantener para arrastrar
+}
+CONFIG_LIMITS = {"speed": (1.0, 10.0), "accel": (0.0, 1.0),
+                 "scroll_speed": (1.0, 10.0), "inertia": (0.0, 1.0)}
+
+
+def clean_config(data):
+    """Valida unos ajustes recibidos y los completa con los valores por defecto."""
+    out = dict(DEFAULT_CONFIG)
+    for k, default in DEFAULT_CONFIG.items():
+        if k not in (data or {}):
+            continue
+        v = data[k]
+        if isinstance(default, bool):
+            out[k] = bool(v)
+        else:
+            lo, hi = CONFIG_LIMITS[k]
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f == f:
+                out[k] = round(max(lo, min(hi, f)), 2)
+    return out
+
+
 # --------------------------------------------------------------------------
 # Servidor (se puede arrancar y parar desde la app)
 # --------------------------------------------------------------------------
@@ -376,7 +410,9 @@ class TouchpadServer:
         self._stop_fut = None
         self._thread = None
         self._clients = {}
+        self._sockets = {}
         self._lock = threading.Lock()
+        self.config = dict(DEFAULT_CONFIG)
         self.ip = None
 
     @property
@@ -394,12 +430,24 @@ class TouchpadServer:
     # ---- HTTP: entrega la página del móvil ----
     def _http_handler(self):
         token = self.token
+        try:
+            import brand
+            icon_png = brand.png("LOGO_180")
+        except Exception:  # noqa: BLE001
+            icon_png = b""
         page = resource("phone.html").read_text(encoding="utf-8").replace(
             "__WS_PORT__", str(WS_PORT)).encode("utf-8")
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 u = urlparse(self.path)
+                if u.path == "/icon.png":      # icono de la app (no necesita el token)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Cache-Control", "max-age=86400")
+                    self.end_headers()
+                    self.wfile.write(icon_png)
+                    return
                 if u.path != "/" or not secrets.compare_digest(
                         parse_qs(u.query).get("t", [""])[0], token):
                     self.send_response(403)
@@ -429,6 +477,11 @@ class TouchpadServer:
         key = id(ws)
         with self._lock:
             self._clients[key] = {"ip": ip, "device": device_name(headers.get("User-Agent", ""))}
+            self._sockets[key] = ws
+        try:
+            await ws.send(json.dumps({"t": "cfg", **self.config}))
+        except websockets.ConnectionClosed:
+            pass
         inp = self.inp
         dragging = False
         try:
@@ -461,6 +514,27 @@ class TouchpadServer:
                 inp.button("l", False)
             with self._lock:
                 self._clients.pop(key, None)
+                self._sockets.pop(key, None)
+
+    # ---- Ajustes: guardar y avisar a los móviles conectados ----
+    def set_config(self, cfg):
+        self.config = clean_config(cfg)
+        if not self.running or not self.loop:
+            return
+        msg = json.dumps({"t": "cfg", **self.config})
+
+        async def push():
+            with self._lock:
+                targets = list(self._sockets.values())
+            for w in targets:
+                try:
+                    await w.send(msg)
+                except Exception:  # noqa: BLE001 - el móvil se ha ido
+                    pass
+        try:
+            asyncio.run_coroutine_threadsafe(push(), self.loop)
+        except RuntimeError:
+            pass
 
     # ---- Arrancar / parar ----
     def start(self):
@@ -514,3 +588,4 @@ class TouchpadServer:
             self._thread.join(5)
         with self._lock:
             self._clients.clear()
+            self._sockets.clear()

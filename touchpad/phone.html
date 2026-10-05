@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="TouchPad">
 <title>TouchPad</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
 <style>
 :root{
   --bg:#F2F2F7; --surface:#FFFFFF; --raise:#E5E5EA; --sep:#E5E5EA;
@@ -109,6 +111,7 @@ input[type=range]{width:100%;accent-color:var(--blue)}
 .seg span{display:block;text-align:center;font-size:13px;font-weight:500;padding:6px 0;border-radius:7px}
 .seg input:checked + span{background:var(--seg-on);box-shadow:0 1px 3px rgba(0,0,0,.15);font-weight:600}
 .btn-wide{width:100%;padding:13px;border-radius:12px;background:var(--surface);color:var(--blue);font-size:16px;font-weight:600;margin-bottom:10px}
+.note{margin:-4px 6px 14px;font-size:13px;line-height:1.45;color:var(--muted)}
 .done{width:100%;padding:13px;border-radius:12px;background:var(--blue);color:#fff;font-size:16px;font-weight:600}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -190,13 +193,9 @@ input[type=range]{width:100%;accent-color:var(--blue)}
     </div>
   </div>
   <div class="group">
-    <label><span class="lbl">Sensibilidad <output id="sensOut"></output></span><input id="sens" type="range" min="0.5" max="3" step="0.1"></label>
-    <label><span class="lbl">Velocidad de desplazamiento <output id="scrollOut"></output></span><input id="scrollSpd" type="range" min="0.5" max="3" step="0.1"></label>
-  </div>
-  <div class="group">
-    <label class="row">Desplazamiento natural<input id="natural" type="checkbox" class="switch"></label>
     <label class="row">Vibrar al tocar<input id="haptics" type="checkbox" class="switch"></label>
   </div>
+  <p class="note">La velocidad, el scroll y los gestos se ajustan desde TouchPad en el ordenador.</p>
   <button class="done" id="close">Hecho</button>
 </dialog>
 
@@ -212,22 +211,16 @@ const store = {
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
 const cfg = {
-  sens: store.get("sens", 1.4), scroll: store.get("scroll", 1.2),
-  natural: store.get("natural", true), haptics: store.get("haptics", true),
+  haptics: store.get("haptics", true),
   collapsed: store.get("collapsed", false)
 };
-function bindRange(id, outId, key){
-  const el = $(id), out = $(outId);
-  el.value = cfg[key]; out.textContent = (+cfg[key]).toFixed(1);
-  el.oninput = () => { cfg[key] = +el.value; out.textContent = cfg[key].toFixed(1); store.set(key, cfg[key]); };
-}
+// Ajustes que manda el ordenador (se actualizan al momento)
+const remote = { speed: 5, accel: 0.7, scroll_speed: 5, inertia: 0.6,
+                 natural: true, tap_click: true, hold_drag: true };
 function bindCheck(id, key){
   $(id).checked = cfg[key];
   $(id).onchange = e => { cfg[key] = e.target.checked; store.set(key, cfg[key]); };
 }
-bindRange("sens", "sensOut", "sens");
-bindRange("scrollSpd", "scrollOut", "scroll");
-bindCheck("natural", "natural");
 bindCheck("haptics", "haptics");
 
 // ---------- Apariencia: auto (según el móvil), claro u oscuro ----------
@@ -276,6 +269,12 @@ function connect(){
     setTimeout(connect, Math.min(4000, 500 * (++retry)));
   };
   ws.onerror = () => {};
+  ws.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m && m.t === "cfg") for (const k in remote) if (k in m) remote[k] = m[k];
+    } catch (err) {}
+  };
 }
 function send(o){ if (ready && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 const buzz = ms => { if (cfg.haptics && navigator.vibrate) navigator.vibrate(ms); };
@@ -390,6 +389,7 @@ function draw(){
 let mx = 0, my = 0, sx = 0, sy = 0;
 let lastX = 0, lastY = 0, startX = 0, startY = 0, startT = 0;
 let maxFingers = 0, moved = false, dragging = false, holdTimer = null;
+let scrolling = false, vsx = 0, vsy = 0, glide = false;   // inercia del scroll
 const TAP_MS = 250, MOVE_SLOP = 8, HOLD_MS = 450;
 
 function center(touches){
@@ -405,13 +405,17 @@ pad.addEventListener("touchstart", e => {
   $("vol").classList.remove("open");
   const n = e.touches.length;
   [lastX, lastY] = center(e.touches);
+  glide = false;
+  if (n === 1){ vsx = vsy = 0; }
   if (n === 1 && !dragging){
     startX = lastX; startY = lastY; startT = performance.now();
     moved = false; maxFingers = 1;
     cancelHold();
-    holdTimer = setTimeout(() => {
-      if (!moved){ dragging = true; pad.classList.add("drag"); send({t:"dn"}); buzz(25); }
-    }, HOLD_MS);
+    if (remote.hold_drag){
+      holdTimer = setTimeout(() => {
+        if (!moved){ dragging = true; pad.classList.add("drag"); send({t:"dn"}); buzz(25); }
+      }, HOLD_MS);
+    }
   } else {
     maxFingers = Math.max(maxFingers, n);
     cancelHold();
@@ -427,12 +431,16 @@ pad.addEventListener("touchmove", e => {
   if (!moved && Math.hypot(x - startX, y - startY) > MOVE_SLOP){ moved = true; cancelHold(); }
   if (e.touches.length === 1){
     const speed = Math.hypot(dx, dy);
-    const gain = cfg.sens * (1 + Math.min(speed, 40) / 12);
+    const sens = 1.4 * remote.speed / 5;
+    const gain = sens * (1 + (remote.accel / 0.7) * Math.min(speed, 40) / 12);
     mx += dx * gain; my += dy * gain;
   } else if (e.touches.length === 2 && moved){
-    const dir = cfg.natural ? 1 : -1;
-    sy += dy * 4 * cfg.scroll * dir;
-    sx += -dx * 4 * cfg.scroll * dir;
+    const dir = remote.natural ? 1 : -1;
+    const k = 4 * (1.2 * remote.scroll_speed / 5) * dir;
+    const ddy = dy * k, ddx = -dx * k;
+    sy += ddy; sx += ddx;
+    vsy = vsy * 0.6 + ddy * 0.4; vsx = vsx * 0.6 + ddx * 0.4;
+    scrolling = true;
   }
   setPoints(e.touches);
 }, {passive:false});
@@ -442,10 +450,12 @@ function endTouch(e){
   setPoints(e.touches);
   if (e.touches.length > 0){ [lastX, lastY] = center(e.touches); return; }
   cancelHold();
+  if (scrolling && remote.inertia > 0.01 && Math.hypot(vsx, vsy) > 2) glide = true;
+  scrolling = false;
   if (dragging){
     dragging = false; pad.classList.remove("drag"); send({t:"up"});
   } else if (!moved && performance.now() - startT < TAP_MS){
-    if (maxFingers === 1){ send({t:"c", b:"l"}); buzz(8); }
+    if (maxFingers === 1){ if (remote.tap_click){ send({t:"c", b:"l"}); buzz(8); } }
     else if (maxFingers === 2){ send({t:"c", b:"r"}); buzz(15); }
     else if (maxFingers >= 3){ send({t:"c", b:"m"}); buzz(15); }
   }
@@ -455,6 +465,12 @@ pad.addEventListener("touchend", endTouch, {passive:false});
 pad.addEventListener("touchcancel", endTouch, {passive:false});
 
 (function flush(){
+  if (glide){   // el scroll sigue deslizando un poco al soltar, y frena poco a poco
+    const friction = 0.86 + 0.12 * Math.min(1, remote.inertia);
+    vsx *= friction; vsy *= friction;
+    sx += vsx; sy += vsy;
+    if (Math.hypot(vsx, vsy) < 0.5){ glide = false; vsx = vsy = 0; }
+  }
   if (mx || my){ send({t:"m", x:+mx.toFixed(2), y:+my.toFixed(2)}); mx = my = 0; }
   if (sx || sy){ send({t:"s", x:Math.round(sx), y:Math.round(sy)}); sx = sy = 0; }
   requestAnimationFrame(flush);
